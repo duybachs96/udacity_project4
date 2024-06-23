@@ -1,0 +1,153 @@
+name: BE CD
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - master
+  paths:
+    - "starter/backend/**"
+
+jobs:
+  lint:
+    defaults:
+      run:
+        working-directory: ./starter/backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Cache pipenv dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pipenv
+          key: pipenv-${{ runner.os }}-${{ hashFiles('**/Pipfile.lock') }}
+          restore-keys: |
+            pipenv-${{ runner.os }}-
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+      - name: Install pipenv
+        run: |
+          pip install pipenv
+      - name: Install dependencies
+        run: |
+          pipenv install
+      - name: Run lint
+        run: |
+          pipenv run lint
+  test:
+    name: Test
+    defaults:
+      run:
+        working-directory: ./starter/backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{env.PYTHON_VERSION}}
+      - name: Install pipenv
+        run: |
+          pip install pipenv
+      - name: Install dependencies
+        run: |
+          pipenv install
+      - name: Run tests
+        run: |
+          pipenv run test
+  build:
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    defaults:
+      run:
+        working-directory: ./starter/backend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{env.PYTHON_VERSION}}
+      - name: Install pipenv
+        run: |
+          pip install pipenv
+      - name: Install dependencies
+        run: |
+          pipenv install
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          mask-password: "true"
+
+      - name: Build image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: backend
+          IMAGE_TAG: latest
+        run: |
+          echo "Build image to $REGISTRY/$REPOSITORY:$IMAGE_TAG"
+          docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+
+      - name: Cache Docker image
+        uses: actions/cache@v3
+        with:
+          path: ~/docker-cache
+          key: docker-${{ github.sha }}-backend
+          restore-keys: |
+            docker-${{ github.sha }}-
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [ build ]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          mask-password: "true"
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name bach-cluster
+
+      - name: Run init.sh
+        run: ./init.sh || true
+        working-directory: ./setup
+
+      - name: Set Docker image in Kustomize
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: backend
+          IMAGE_TAG: latest
+        run: kustomize edit set image backend=$REGISTRY/$REPOSITORY:$IMAGE_TAG
+        working-directory: ./starter/backend/k8s
+
+      - name: Apply Kubernetes resources
+        run: kustomize build | kubectl apply -f -
+        working-directory: ./starter/backend/k8s
