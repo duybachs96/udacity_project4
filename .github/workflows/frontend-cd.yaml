@@ -116,7 +116,7 @@ jobs:
 
       - name: Update kubeconfig
         run: |
-          aws eks update-kubeconfig --name bach-cluster
+          aws eks update-kubeconfig --name cluster
 
       - name: Run init.sh
         run: |
