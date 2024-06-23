@@ -1,15 +1,12 @@
 name: FE CD
 
 on:
-  push:
-    branches:
-      - master
   workflow_dispatch:
   pull_request:
     branches:
       - master
-  paths:
-    - "starter/frontend/**"
+    paths:
+      - "starter/frontend/**"
 
 jobs:
   lint:
