@@ -1,10 +1,10 @@
-name: BE CD
+name: Backend Continuous Deployment
 
 on:
   workflow_dispatch:
-  pull_request:
+  push:
     branches:
-      - master
+      - main
     paths:
       - "starter/backend/**"
 
